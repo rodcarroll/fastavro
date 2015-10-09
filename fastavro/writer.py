@@ -337,15 +337,13 @@ def acquaint_schema(schema, repo=WRITERS):
     )
 
 
-def writer(fo,
-           schema,
-           records,
-           codec='null',
-           sync_interval=1000 * SYNC_SIZE,
-           metadata=None):
+def begin_write_async(fo,
+                      schema,
+                      codec='null',
+                      metadata=None):
+    """Write header and initialize data to write asyncronously"""
     sync_marker = urandom(SYNC_SIZE)
     io = MemoryIO()
-    block_count = 0
     metadata = metadata or {}
     metadata['avro.codec'] = codec
     metadata['avro.schema'] = json.dumps(schema)
@@ -355,7 +353,7 @@ def writer(fo,
     except KeyError:
         raise ValueError('Unrecognized codec: {0!r}'.format(codec))
 
-    def dump():
+    def dump(block_count):
         write_long(fo, block_count)
         block_writer(fo, io.getvalue())
         fo.write(sync_marker)
@@ -365,17 +363,61 @@ def writer(fo,
     write_header(fo, metadata, sync_marker)
     acquaint_schema(schema)
 
-    for record in records:
-        write_data(io, record, schema)
-        block_count += 1
-        if io.tell() >= sync_interval:
-            dump()
-            block_count = 0
+    kwargs = {
+        'io': io,
+        'block_count': 0,
+        'dump_func': dump
+    }
 
+    return kwargs
+
+
+def write_record_async(record,
+                       schema,
+                       sync_interval,
+                       io,
+                       block_count,
+                       dump_func):
+    """Write a single record"""
+    write_data(io, record, schema)
+    block_count += 1
+    if io.tell() >= sync_interval:
+        dump_func(block_count)
+        block_count = 0
+
+    kwargs = {
+        'io': io,
+        'block_count': block_count,
+        'dump_func': dump_func
+    }
+
+    return kwargs
+
+
+def end_write_async(fo,
+                    io,
+                    block_count,
+                    dump_func):
+    """Dump remaining cache and flush the file stream"""
     if io.tell() or block_count > 0:
-        dump()
+        dump_func(block_count)
 
     fo.flush()
+
+
+def writer(fo,
+           schema,
+           records,
+           codec='null',
+           sync_interval=1000 * SYNC_SIZE,
+           metadata=None):
+
+    kwargs = begin_write_async(fo, schema, codec, metadata)
+
+    for record in records:
+        kwargs = write_record_async(record, schema, sync_interval, **kwargs)
+
+    end_write_async(fo, **kwargs)
 
 
 def schemaless_writer(fo, schema, record):

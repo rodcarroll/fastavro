@@ -67,6 +67,9 @@ schemaless_writer = _writer.schemaless_writer
 dump = _writer.write_data
 acquaint_schema = _acquaint_schema
 _schema.acquaint_schema = _acquaint_schema
+begin_write_async = _writer.begin_write_async
+write_record_async = _writer.begin_write_async
+end_write_async = _writer.end_write_async
 
 __all__ = [
     n for n in locals().keys() if not n.startswith('_')
